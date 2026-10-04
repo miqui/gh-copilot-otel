@@ -13,7 +13,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "install-launchagent.sh"
-LABEL = "io.github.copilot-otel.collector"
+LABEL = "io.github.copilot-otel"
 
 
 class LaunchAgentTests(unittest.TestCase):
@@ -44,7 +44,7 @@ class LaunchAgentTests(unittest.TestCase):
             "client_secret": "fixture", "refresh_token": "fixture",
         }))
         self.plist = self.home / "Library/LaunchAgents" / (LABEL + ".plist")
-        self.stable = self.home / ".local/share/copilot-otel/collector.yaml"
+        self.stable = self.home / ".local/share/gh-copilot-otel/collector.yaml"
         self.target = f"gui/{os.getuid()}/{LABEL}"
         self.env = {
             "PATH": str(self.tools), "HOME": str(self.home),
@@ -270,6 +270,29 @@ if Path({str(self.work / 'fail-validation')!r}).exists():
                     self.assertFalse(self.loaded.exists())
                 finally:
                     hidden.rename(path)
+
+    def test_old_python_has_actionable_error_before_path_api_or_service_use(self):
+        (self.tools / "python3").unlink()
+        self.tool("python3", """
+sys.version_info = (3, 8, 20)
+def unavailable_path_api(*args):
+    raise AttributeError('Path.is_relative_to unavailable on Python 3.8')
+Path.is_relative_to = unavailable_path_api
+if sys.argv[1] == '-c':
+    exec(sys.argv[2])
+elif sys.argv[1] == '-':
+    sys.argv = sys.argv[1:]
+    exec(sys.stdin.read())
+else:
+    sys.exit(99)
+""")
+        result = self.run_installer()
+        self.assert_failed(result, "Python 3.9+")
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(self.plist.exists())
+        self.assertFalse(self.stable.exists())
+        self.assertFalse(any(c[0] in {"otelcol-contrib", "launchctl", "curl"}
+                             for c in self.calls()))
 
     def test_missing_binary_or_config_or_template(self):
         for path, diagnostic in [(self.binary, "binary"), (self.config, "config")]:

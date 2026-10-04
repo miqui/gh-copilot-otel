@@ -69,6 +69,38 @@ class WrapperTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, stderr)
         self.assertEqual(json.loads(self.output.read_text())["pid"], process.pid)
 
+    def test_custom_copilot_path_with_spaces_preserves_args_and_exit_status(self):
+        custom = self.work / "selected Copilot & spaces"
+        self.cli.rename(custom)
+        self.env["COPILOT_BIN"] = str(custom)
+        args = ["--prompt", "custom 'quoted' prompt\nsecond line", "", "*", "--"]
+        for code in [0, 7, 130]:
+            with self.subTest(code=code):
+                self.env["CLI_EXIT"] = str(code)
+                result = self.run_wrapper(args)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(json.loads(self.output.read_text())["args"], args)
+
+    def test_custom_copilot_command_is_resolved_on_path(self):
+        custom = self.tools / "custom-copilot"
+        self.cli.rename(custom)
+        self.env["COPILOT_BIN"] = custom.name
+        result = self.run_wrapper(["--version"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(self.output.read_text())["args"], ["--version"])
+
+    def test_invalid_custom_copilot_never_falls_back_to_default(self):
+        not_executable = self.work / "nonexecutable CLI"
+        not_executable.write_text("not executable\n")
+        for path in ["", str(self.work / "missing CLI"),
+                     str(self.tools), str(not_executable)]:
+            with self.subTest(path=path):
+                self.env["COPILOT_BIN"] = path
+                result = self.run_wrapper()
+                self.assertEqual(result.returncode, 127, result.stderr)
+                self.assertIn("COPILOT_BIN", result.stderr)
+                self.assertFalse(self.output.exists())
+
     def test_conflicting_export_content_tls_and_headers_cannot_escape(self):
         conflicts = {
             "COPILOT_OTEL_ENABLED": "false",

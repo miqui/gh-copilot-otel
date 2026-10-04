@@ -2,8 +2,10 @@
 # Opt-in local telemetry; leave Copilot authentication and arguments intact.
 set -eu
 
-command -v copilot >/dev/null 2>&1 || {
-    printf '%s\n' 'copilot-otel: missing prerequisite: copilot' >&2
+copilot_bin=${COPILOT_BIN-copilot}
+copilot_bin=$(command -v "$copilot_bin" 2>/dev/null) \
+    && [ -f "$copilot_bin" ] && [ -x "$copilot_bin" ] || {
+    printf '%s\n' 'copilot-otel: COPILOT_BIN must select an executable (default: copilot)' >&2
     exit 127
 }
 
@@ -22,4 +24,4 @@ export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false
 export OTEL_TRACES_EXPORTER=otlp OTEL_METRICS_EXPORTER=otlp OTEL_LOGS_EXPORTER=none
 export OTEL_SDK_DISABLED=false
 
-exec copilot "$@"
+exec "$copilot_bin" "$@"

@@ -9,6 +9,8 @@ fail() {
 for command in python3 uname launchctl curl; do
     command -v "$command" >/dev/null 2>&1 || fail "missing prerequisite: $command"
 done
+python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
+    || fail "Python 3.9+ is required; select a newer python3 on PATH"
 [ "$(uname -s)" = Darwin ] || fail "macOS required"
 script_dir=$(CDPATH='' cd -- "${0%/*}" && pwd -P)
 
@@ -26,7 +28,7 @@ import tempfile
 import time
 
 
-LABEL = "io.github.copilot-otel.collector"
+LABEL = "io.github.copilot-otel"
 HEALTH = "http://127.0.0.1:13133/"
 
 
@@ -107,7 +109,7 @@ def main():
     }:
         fail("unsupported ADC credentials type")
 
-    service_dir = home / ".local/share/copilot-otel"
+    service_dir = home / ".local/share/gh-copilot-otel"
     config = service_dir / "collector.yaml"
     state = service_dir / "install-state.json"
     plist = home / "Library/LaunchAgents" / (LABEL + ".plist")

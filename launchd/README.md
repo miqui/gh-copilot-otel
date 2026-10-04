@@ -8,8 +8,9 @@ GCP_PROJECT_ID=my-project scripts/install-launchagent.sh
 scripts/copilot-otel.sh --version
 ```
 
-Prerequisites: macOS, Python 3.9+, `launchctl`, `curl`, the native Collector
-installed by `scripts/install-collector.sh`, and existing Google Application
+Prerequisites: macOS, Python 3.9+ (checked before installation), `launchctl`,
+`curl`, the native Collector installed by `scripts/install-collector.sh`,
+and existing Google Application
 Default Credentials (ADC) outside the repository. The binary defaults to
 `$HOME/.local/bin/otelcol-contrib`; pass the same absolute `INSTALL_DIR` to
 both installers if you change it. The binary must also be outside the
@@ -32,9 +33,9 @@ or enables APIs. Existing keyless impersonation/external-account ADC is
 supported. Do not generate service-account keys for this workflow.
 
 The installer validates the production config using the selected binary,
-copies it to `$HOME/.local/share/copilot-otel/collector.yaml`, and serializes
+copies it to `$HOME/.local/share/gh-copilot-otel/collector.yaml`, and serializes
 a safely escaped plist with Python `plistlib` at
-`$HOME/Library/LaunchAgents/io.github.copilot-otel.collector.plist`.
+`$HOME/Library/LaunchAgents/io.github.copilot-otel.plist`.
 The service has explicit HOME, minimal PATH, project/quota, and ADC
 environment settings; it does not depend on the repository's location or
 inherit your terminal's authentication/exporter environment. Keep the
@@ -49,7 +50,7 @@ that job if its arguments/environment/template changed. Unrelated files,
 modified installed config/plist, symlink destinations, and another job
 using this label are rejected rather than overwritten. Make config changes
 in the repository and rerun, not in the installed copy. Do not modify the
-ownership state at `.local/share/copilot-otel/install-state.json`.
+ownership state at `.local/share/gh-copilot-otel/install-state.json`.
 
 Bootstrap/kickstart success alone is not readiness: the installer polls
 `launchctl print` for a running job with a PID and checks
@@ -68,11 +69,16 @@ TLS overrides, and `exec`s Copilot with the original arguments. Normal
 Copilot authentication and provider/proxy settings remain available.
 It does not modify shell startup files or enable telemetry for unwrapped
 CLI invocations. Collector filtering remains the second privacy boundary.
+By default it resolves `copilot` on PATH. Set `COPILOT_BIN` to select a
+different executable path or command name, for example
+`COPILOT_BIN="/path with spaces/copilot" scripts/copilot-otel.sh --version`.
+An empty, missing, or nonexecutable selection fails explicitly without
+falling back to the default CLI.
 
 For removal, explicitly unload only this job:
 
 ```sh
-launchctl bootout "gui/$(id -u)/io.github.copilot-otel.collector"
+launchctl bootout "gui/$(id -u)/io.github.copilot-otel"
 ```
 
 After confirming that it is unloaded, remove the named plist, installed

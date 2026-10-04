@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>io.github.copilot-otel.collector</string>
+    <string>io.github.copilot-otel</string>
     <key>ProgramArguments</key>
     <array>
         <string>COLLECTOR_BINARY</string>
