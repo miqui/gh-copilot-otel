@@ -110,6 +110,31 @@ and permission to perform cloud operations: synthetic telemetry and a
 harmless CLI session must appear in metrics and traces without content.
 If unavailable, document that live GCP acceptance has not been performed.
 
+### Unresolved metric correctness gate
+
+Native v0.162.0 regressions show that current privacy normalization loses
+cumulative counter and histogram observations when distinct raw model
+dimensions, resources or scopes acquire the same exported identity.
+Unknown-to-`other` normalization is still required; restoring sensitive
+dimensions or discarding these observations is not an acceptable fix.
+`tests/test_metric_collisions.py` preserves intentionally failing native
+regressions for this gate.
+
+Batch-local aggregation alone is insufficient for independent source resets.
+The pinned cumulative-to-delta processor also rewinds its baseline on a
+delayed duplicate, so a following repeated newer observation is counted again.
+Delta-to-cumulative conversion after normalization drops simultaneous
+colliding streams. Rewriting timestamps can avoid that particular collision
+but does not fix replay handling and changes interval semantics.
+
+A future approach must retain source identity internally until it has
+performed reset-aware, replay-safe reaggregation. A validated random
+process-instance identity could distinguish producers, but does not by
+itself distinguish colliding model/tool/error streams within one producer.
+Selecting a different supported component or relaxing the ingestion contract
+requires an explicit design decision. This gate does not relax the privacy,
+bounded-buffering or build-only requirements above.
+
 Commit reusable artifacts only, with the required Copilot co-author trailer,
 and push to the requested public repository. Never include credentials,
 real usage telemetry, machine-specific configuration or unrelated files.

@@ -16,6 +16,13 @@ tool latency. Token counts are operational telemetry, **not Copilot billing**.
 
 **Build/validation status:** automated tests and local native Collector checks
 only. Real GCP ingestion and dashboard rendering have **not** been accepted.
+**Metric correctness is currently blocked:** privacy normalization can collapse
+distinct cumulative streams onto the same exported labels, losing token counts
+and histogram observations. A receiver HTTP 200 or a valid configuration does
+not establish correct totals. The native regressions in
+[`tests/test_metric_collisions.py`](tests/test_metric_collisions.py) deliberately
+remain RED; do not treat this build as ingestion-ready. See the
+[design's unresolved correctness gate](docs/superpowers/specs/2026-10-03-copilot-gcp-otel-design.md#unresolved-metric-correctness-gate).
 Nothing here automatically enables APIs, changes IAM, imports a dashboard,
 authenticates, or installs a background service. Commands below that change
 GCP or install a service are instructions for a separately authorized operator,
