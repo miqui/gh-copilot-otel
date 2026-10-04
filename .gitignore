@@ -1,0 +1,22 @@
+.scratch/
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Local configuration, credentials, downloads, and generated telemetry.
+.env
+.env.*
+!.env.example
+*.local.yaml
+*.local.yml
+application_default_credentials.json
+*credentials*.json
+*service-account*.json
+*.pem
+*.key
+otelcol-contrib
+otelcol-contrib_*.tar.gz
+*checksums.txt
+*.jsonl
+*.log

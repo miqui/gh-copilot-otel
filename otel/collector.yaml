@@ -1,0 +1,123 @@
+# v0.162.0 contrib. Supply GCP_PROJECT_ID and GCP_QUOTA_PROJECT_ID plus ADC.
+# Validate: otelcol-contrib validate --config otel/collector.yaml
+# Local tests: OTELCOL_BIN=/path/to/otelcol-contrib python -m unittest discover -s tests -v
+# This is a lossy, memory-only buffer: shutdown/outages/queue exhaustion lose data.
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+  googleclientauth:
+    project: ${env:GCP_PROJECT_ID}
+    quota_project: ${env:GCP_QUOTA_PROJECT_ID}
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 128
+    spike_limit_mib: 32
+
+  # An exact metric-name allowlist also protects free-form metric names.
+  filter/metrics:
+    error_mode: propagate
+    metrics:
+      metric:
+        - 'not IsMatch(metric.name, "^(gen_ai[.]client[.](operation[.](duration|time_to_first_chunk|time_per_output_chunk)|inference[.](operation[.](input_tokens|output_tokens)|usage[.](input_tokens|output_tokens|cache_read[.]input_tokens|cache_write[.]input_tokens|reasoning[.]output_tokens)))|gen_ai[.](invoke_agent[.](duration|inference_calls|tool_calls)|invoke_workflow[.]duration|execute_tool[.]duration)|github[.]copilot[.](tool[.]call[.](count|duration)|agent[.]turn[.]count|changeboarding[.]model_nudge[.]count|mcp[.]server[.]connection[.]count|code[.](lines_added|lines_removed)|sandbox[.](operation[.]count|spawn[.]duration|policy[.]path[.]count)))$")'
+
+  transform/privacy:
+    error_mode: propagate
+    trace_statements:
+      - context: resource
+        statements: &resource_privacy
+          - keep_keys(resource.attributes, [])
+          - set(resource.attributes["service.name"], "github-copilot")
+          - set(resource.attributes["gcp.project_id"], "${env:GCP_PROJECT_ID}")
+          - set(resource.schema_url, "")
+      - context: scope
+        statements: &scope_privacy
+          - keep_keys(scope.attributes, [])
+          - set(scope.name, "github.copilot")
+          - set(scope.version, "")
+          - set(scope.schema_url, "")
+      - context: span
+        statements:
+          # Derive bounded categories before removing arbitrary name suffixes.
+          - set(span.cache["category"], "operation")
+          - set(span.cache["category"], "invoke_agent") where IsMatch(span.name, "^invoke_agent( .*)?$") or span.attributes["gen_ai.operation.name"] == "invoke_agent"
+          - set(span.cache["category"], "plan") where IsMatch(span.name, "^plan( .*)?$") or span.attributes["gen_ai.operation.name"] == "plan"
+          - set(span.cache["category"], "chat") where IsMatch(span.name, "^chat( .*)?$") or span.attributes["gen_ai.operation.name"] == "chat"
+          - set(span.cache["category"], "execute_tool") where IsMatch(span.name, "^execute_tool( .*)?$") or span.attributes["gen_ai.operation.name"] == "execute_tool"
+          - set(span.cache["category"], "invoke_workflow") where IsMatch(span.name, "^invoke_workflow( .*)?$") or span.attributes["gen_ai.operation.name"] == "invoke_workflow"
+          - set(span.name, span.cache["category"])
+          - set(span.events, nil)
+          - set(span.links, nil)
+          - set(span.trace_state, "")
+          - set(span.status.message, "")
+          - keep_keys(span.attributes, ["gen_ai.operation.name", "gen_ai.provider.name", "gen_ai.request.model", "gen_ai.response.model", "gen_ai.tool.name", "error.type", "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "gen_ai.usage.cache_read.input_tokens", "gen_ai.usage.cache_write.input_tokens", "gen_ai.usage.reasoning.output_tokens"])
+          - delete_key(span.attributes, "gen_ai.usage.input_tokens") where not IsInt(span.attributes["gen_ai.usage.input_tokens"])
+          - delete_key(span.attributes, "gen_ai.usage.output_tokens") where not IsInt(span.attributes["gen_ai.usage.output_tokens"])
+          - delete_key(span.attributes, "gen_ai.usage.cache_read.input_tokens") where not IsInt(span.attributes["gen_ai.usage.cache_read.input_tokens"])
+          - delete_key(span.attributes, "gen_ai.usage.cache_write.input_tokens") where not IsInt(span.attributes["gen_ai.usage.cache_write.input_tokens"])
+          - delete_key(span.attributes, "gen_ai.usage.reasoning.output_tokens") where not IsInt(span.attributes["gen_ai.usage.reasoning.output_tokens"])
+      - context: span
+        statements: &bounded_dimensions
+          # Unknown values collapse to "other"; regexes enumerate finite values,
+          # not arbitrary model, tool, identity, or error-message strings.
+          - 'set(attributes["gen_ai.operation.name"], "other") where attributes["gen_ai.operation.name"] != nil and not IsMatch(attributes["gen_ai.operation.name"], "^(chat|invoke_agent|invoke_workflow|execute_tool|plan)$")'
+          - 'set(attributes["gen_ai.provider.name"], "other") where attributes["gen_ai.provider.name"] != nil and not IsMatch(attributes["gen_ai.provider.name"], "^(github|openai|anthropic|google|azure[.]ai[.]openai)$")'
+          - 'set(attributes["gen_ai.request.model"], "other") where attributes["gen_ai.request.model"] != nil and not IsMatch(attributes["gen_ai.request.model"], "^(gpt-4o|gpt-4[.]1|gpt-5|gpt-5[.]1|gpt-5[.]2|gpt-5[.]3-codex|gpt-5[.]4|gpt-5-mini|claude-sonnet-4|claude-sonnet-4[.]5|claude-sonnet-4[.]6|claude-opus-4[.]5|claude-opus-4[.]6|claude-haiku-4[.]5|gemini-2[.]5-pro|gemini-3-pro)$")'
+          - 'set(attributes["gen_ai.response.model"], "other") where attributes["gen_ai.response.model"] != nil and not IsMatch(attributes["gen_ai.response.model"], "^(gpt-4o|gpt-4[.]1|gpt-5|gpt-5[.]1|gpt-5[.]2|gpt-5[.]3-codex|gpt-5[.]4|gpt-5-mini|claude-sonnet-4|claude-sonnet-4[.]5|claude-sonnet-4[.]6|claude-opus-4[.]5|claude-opus-4[.]6|claude-haiku-4[.]5|gemini-2[.]5-pro|gemini-3-pro)$")'
+          - 'set(attributes["gen_ai.tool.name"], "other") where attributes["gen_ai.tool.name"] != nil and not IsMatch(attributes["gen_ai.tool.name"], "^(bash|view|edit|create|apply_patch|grep|glob|rg|task|web_fetch|web_search|read_bash|write_bash|stop_bash|sql)$")'
+          - 'set(attributes["error.type"], "other") where attributes["error.type"] != nil and not IsMatch(attributes["error.type"], "^(timeout|rate_limit|authentication|permission_denied|invalid_request|cancelled|internal|unavailable)$")'
+    metric_statements:
+      - context: resource
+        statements: *resource_privacy
+      - context: scope
+        statements: *scope_privacy
+      - context: metric
+        statements:
+          - set(metric.description, "")
+          - set(metric.unit, "")
+          - 'set(metric.unit, "{token}") where IsMatch(metric.name, "[.](input_tokens|output_tokens)$")'
+          - 'set(metric.unit, "s") where IsMatch(metric.name, "[.](duration|time_to_first_chunk|time_per_output_chunk)$")'
+      - context: datapoint
+        statements:
+          - keep_keys(datapoint.attributes, ["gen_ai.operation.name", "gen_ai.provider.name", "gen_ai.request.model", "gen_ai.response.model", "gen_ai.tool.name", "error.type"])
+          - set(datapoint.exemplars, nil) where metric.type != METRIC_DATA_TYPE_SUMMARY
+      - context: datapoint
+        statements: *bounded_dimensions
+
+  batch:
+    timeout: 5s
+    send_batch_size: 256
+    send_batch_max_size: 256
+
+exporters:
+  otlp_http/gcp:
+    endpoint: https://telemetry.googleapis.com
+    encoding: proto
+    auth:
+      authenticator: googleclientauth
+    sending_queue:
+      enabled: true
+      sizer: requests
+      queue_size: 256
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 300s
+
+service:
+  extensions: [health_check, googleclientauth]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/privacy, batch]
+      exporters: [otlp_http/gcp]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/metrics, transform/privacy, batch]
+      exporters: [otlp_http/gcp]
