@@ -203,6 +203,9 @@ def exchange(connection, path, payload):
     result = response.read(MAX_RESPONSE_BYTES + 1)
     if len(result) > MAX_RESPONSE_BYTES:
         raise ValueError("OTLP response exceeds size limit")
+    # A sized read can return early at EOF without enforcing Content-Length.
+    if response.length not in (None, 0):
+        raise http.client.IncompleteRead(result, response.length)
     content_type = response.getheader("Content-Type", "").split(";", 1)[0].strip().lower()
     return result, content_type
 

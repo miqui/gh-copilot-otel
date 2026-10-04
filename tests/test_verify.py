@@ -40,11 +40,14 @@ def server(replies=None, health=200, delay=0, drip=0):
             received.append((self.path, self.headers,
                              json.loads(self.rfile.read(
                                  int(self.headers["Content-Length"])))))
-            status, content_type, body = (replies or {}).get(
+            reply = (replies or {}).get(
                 self.path, (200, "application/json", b"{}"))
+            status, content_type, body = reply[:3]
             time.sleep(delay)
             self.send_response(status)
             self.send_header("Content-Type", content_type)
+            for key, value in (reply[3] if len(reply) > 3 else {}).items():
+                self.send_header(key, value)
             self.end_headers()
             try:
                 if drip:
@@ -241,6 +244,56 @@ class VerifyTests(unittest.TestCase):
             }) as (base, received):
                 status, out, err = self.run_sender(module, base)
                 self.assertEqual(status, 1)
+
+    def test_truncated_declared_length_responses_fail_before_otlp_success(self):
+        module = self.sender()
+        for signal in ("traces", "metrics"):
+            for content_type, body in (
+                    ("application/json", b"{}"), ("application/json", b""),
+                    ("application/x-protobuf", b"\x0a\x00"),
+                    ("application/x-protobuf", b"")):
+                with self.subTest(signal=signal, content_type=content_type, body=body), \
+                        server(replies={"/v1/" + signal: (
+                            200, content_type, body, {"Content-Length": "100"})
+                        }) as (base, received):
+                    status, out, err = self.run_sender(module, base)
+                    self.assertEqual(status, 1, out + err)
+                    self.assertIn("IncompleteRead", err)
+                    self.assertNotIn("Locally accepted", out)
+                    self.assertNotIn("Trace ID:", out)
+                    self.assertEqual(len(received), 1 if signal == "traces" else 2)
+
+    def test_complete_declared_length_responses_remain_successful(self):
+        module = self.sender()
+        for content_type, body in (
+                ("application/json", b"{}"), ("application/json", b""),
+                ("application/x-protobuf", b"\x0a\x00"),
+                ("application/x-protobuf", b"")):
+            with self.subTest(content_type=content_type, body=body), server(replies={
+                "/v1/" + signal: (
+                    200, content_type, body, {"Content-Length": str(len(body))})
+                for signal in ("traces", "metrics")
+            }) as (base, received):
+                status, out, err = self.run_sender(module, base)
+                self.assertEqual(status, 0, out + err)
+
+    def test_chunked_response_requires_complete_chunk_and_terminator(self):
+        module = self.sender()
+        for signal in ("traces", "metrics"):
+            for body, expected in ((b"2\r\n{}\r\n0\r\n\r\n", 0),
+                                   (b"0\r\n\r\n", 0),
+                                   (b"2\r\n{}", 1),
+                                   (b"2\r\n{}\r\n", 1),
+                                   (b"3\r\n{}", 1)):
+                with self.subTest(signal=signal, body=body), server(replies={
+                    "/v1/" + signal: (
+                        200, "application/json", body, {"Transfer-Encoding": "chunked"})
+                }) as (base, received):
+                    status, out, err = self.run_sender(module, base)
+                    self.assertEqual(status, expected, out + err)
+                    if expected:
+                        self.assertIn("IncompleteRead", err)
+                        self.assertNotIn("Locally accepted", out)
 
     def test_timeout_is_bounded_and_proxies_are_bypassed(self):
         module = self.sender()
