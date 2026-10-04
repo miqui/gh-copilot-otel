@@ -94,10 +94,14 @@ def metric_payload(poisoned=False):
     metrics = [
         {"name": "gen_ai.client.inference.usage.input_tokens",
          "unit": SECRET, "description": SECRET,
+         "metadata": attributes({"private": SECRET}),
          "sum": {"aggregationTemporality": 2, "isMonotonic": True,
                  "dataPoints": [{**point, "asInt": "123"}]}},
         {"name": "gen_ai.client.operation.duration",
          "unit": SECRET, "description": SECRET,
+         "metadata": [{"key": SECRET, "value": {"kvlistValue": {"values": [
+             {"key": "nested", "value": {"arrayValue": {
+                 "values": [{"stringValue": SECRET}]}}}]}}}],
          "histogram": {"aggregationTemporality": 2,
                        "dataPoints": [{**point, "count": "2", "sum": 1.5,
                                        "min": 0.5, "max": 1.0,
@@ -249,6 +253,26 @@ class CollectorTests(unittest.TestCase):
     def assert_private(self, data):
         self.assertNotIn(SECRET, json.dumps(data))
 
+    def assert_operational_samples(self, data):
+        spans = [span for record in data for resource in record.get("resourceSpans", [])
+                 for scope in resource["scopeSpans"] for span in scope["spans"]]
+        self.assertEqual(len(spans), 1, "Valid trace signal was discarded")
+        self.assertEqual(spans[0]["startTimeUnixNano"], "1700000000000000000")
+        self.assertEqual(spans[0]["endTimeUnixNano"], "1700000001500000000")
+        metrics = [metric for record in data
+                   for resource in record.get("resourceMetrics", [])
+                   for scope in resource["scopeMetrics"] for metric in scope["metrics"]]
+        self.assertEqual(len(metrics), 2, "Valid metric signals were discarded")
+        by_name = {metric["name"]: metric for metric in metrics}
+        tokens = by_name["gen_ai.client.inference.usage.input_tokens"]
+        self.assertEqual(tokens["sum"]["dataPoints"][0]["asInt"], "123")
+        duration = by_name["gen_ai.client.operation.duration"]
+        point = duration["histogram"]["dataPoints"][0]
+        self.assertEqual(point["count"], "2")
+        self.assertEqual(point["sum"], 1.5)
+        self.assertEqual(point["bucketCounts"], ["1", "1"])
+        self.assertEqual(point["explicitBounds"], [0.75])
+
     def test_sensitive_fields_removed_operational_counts_durations_preserved(self):
         data, responses, logs = self.run_local([
             ("traces", trace_payload()),
@@ -279,6 +303,8 @@ class CollectorTests(unittest.TestCase):
                    for resource in record.get("resourceMetrics", [])
                    for scope in resource["scopeMetrics"] for metric in scope["metrics"]]
         self.assertEqual(len(metrics), 2)
+        for metric in metrics:
+            self.assertFalse(metric.get("metadata"), "Metric metadata survived export")
         by_name = {metric["name"]: metric for metric in metrics}
         tokens = by_name["gen_ai.client.inference.usage.input_tokens"]
         self.assertEqual(tokens["sum"]["dataPoints"][0]["asInt"], "123")
@@ -309,7 +335,7 @@ class CollectorTests(unittest.TestCase):
         ])
         self.assertEqual(responses, [200, 200], logs)
         self.assert_private(data)
-        self.assertTrue(data, "Failing closed must not discard valid numeric samples")
+        self.assert_operational_samples(data)
 
     def test_canonical_span_categories_preserved_without_model_or_tool_suffix(self):
         names = ["invoke_agent", "plan", "chat " + SECRET,
@@ -355,7 +381,13 @@ class CollectorTests(unittest.TestCase):
             ("traces", traces), ("metrics", metrics)])
         self.assertEqual(responses, [200, 200], logs)
         self.assert_private(data)
-        self.assertTrue(data, "Nested dimensions must not lose valid numeric samples")
+        self.assert_operational_samples(data)
+        spans = [span for record in data for resource in record.get("resourceSpans", [])
+                 for scope in resource["scopeSpans"] for span in scope["spans"]]
+        self.assertEqual(attribute_map(spans[0]["attributes"])["gen_ai.usage.input_tokens"],
+                         "123")
+        self.assertEqual(attribute_map(spans[0]["attributes"])["gen_ai.usage.output_tokens"],
+                         "45")
 
     def test_application_logs_are_not_received_or_exported(self):
         payload = {"resourceLogs": [{

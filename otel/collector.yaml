@@ -80,6 +80,7 @@ processors:
         statements: *scope_privacy
       - context: metric
         statements:
+          - keep_keys(metric.metadata, [])
           - set(metric.description, "")
           - set(metric.unit, "")
           - 'set(metric.unit, "{token}") where IsMatch(metric.name, "[.](input_tokens|output_tokens)$")'
